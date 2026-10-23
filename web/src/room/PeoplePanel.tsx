@@ -13,12 +13,14 @@ import type { Participants } from './useParticipants'
 import type { RemotePeer } from './useRoomCore'
 import type { QosReport } from '../webrtc'
 import { Bloco } from './Bloco'
+import { emPalco } from './webinar'
 
 export function PeoplePanel({
   code,
   isHost,
   canAdmit,
   isTraining,
+  isBroadcast = false,
   peers,
   speaking,
   micOn,
@@ -44,6 +46,8 @@ export function PeoplePanel({
   isHost: boolean
   canAdmit: boolean
   isTraining: boolean
+  /** Webinar (A-09): o anfitrião dá e tira a palavra. */
+  isBroadcast?: boolean
   peers: RemotePeer[]
   speaking: Set<string>
   micOn: boolean
@@ -219,6 +223,15 @@ export function PeoplePanel({
               )}
               {isHost && !p.host && (
                 <div className="rm-person__actions" role="group" aria-label={t('room.pessoas.accoesSobre', { nome: p.username })}>
+                  {isBroadcast && (
+                    <IconButton
+                      icon="mic"
+                      label={emPalco(p.role) ? t('room.pessoas.tirarPalavra', { nome: p.username }) : t('room.pessoas.darPalavra', { nome: p.username })}
+                      aria-pressed={emPalco(p.role)}
+                      // O servidor põe-no em palco no SFU (A-09): é isto que decide se a sala o ouve.
+                      onClick={() => participants.setRole(p.peerId, emPalco(p.role) ? 'attendee' : 'speaker')}
+                    />
+                  )}
                   <IconButton icon="micOff" label={t('room.tile.silenciar', { nome: p.username })} onClick={() => participants.mute(p.peerId)} />
                   <IconButton icon="videoOff" label={t('room.pessoas.desligarCamara', { nome: p.username })} onClick={() => participants.camOff(p.peerId)} />
                   <IconButton

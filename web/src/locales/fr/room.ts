@@ -310,6 +310,10 @@ export default {
     servidorCheio: 'Ce serveur est plein pour le moment. Réessayez dans un instant.',
     parteJusta: 'Le serveur est occupé et votre organisation utilise déjà la part qui lui revient. Réessayez dans un instant.',
   },
+  webinar: {
+    aAssistir: 'Vous assistez — l’hôte peut vous donner la parole',
+    publicacaoRetida: 'Vous assistez : seules les personnes ayant la parole sont entendues et vues.',
+  },
   estado: {
     aLigar: 'Connexion…',
     permissaoBloqueada: "Le navigateur a bloqué la caméra et le micro. Autorisez-les via le cadenas de la barre d'adresse.",
@@ -493,6 +497,8 @@ export default {
     congelado: '{{ms}} ms figé',
     accoesSobre: 'Actions pour {{nome}}',
     desligarCamara: 'Désactiver la caméra de {{nome}}',
+    darPalavra: 'Donner la parole à {{nome}}',
+    tirarPalavra: 'Retirer la parole à {{nome}}',
     permitirPartilha: "Autoriser {{nome}} à partager l'écran",
     retirarPartilha: "Retirer le partage d'écran à {{nome}}",
     permitirAdmissao: 'Autoriser {{nome}} à admettre des entrées',

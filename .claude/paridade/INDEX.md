@@ -35,7 +35,7 @@ De pé: `A-03` e `A-05`.
 | `A-06` | Canais persistentes de equipa | por escrever |
 | `A-07` | `require_mfa` não impõe MFA, e o lockout é por processo | por escrever |
 | `A-08` | [Legal hold e eDiscovery](A-08-legal-hold-e-ediscovery.md) | escrito |
-| `A-09` | [Modo webinar — dois formatos inertes](A-09-modo-webinar.md) | escrito |
+| `A-09` | [Modo webinar — dois formatos inertes](A-09-modo-webinar.md) | ✅ **IMPLEMENTADO** 2026-10-21: o `broadcast` impõe o palco no SFU (fora de palco, 0 pacotes; promovido, chega; despromovido, corta), com controlo negativo. O ecrã do assistente foi visto; a promoção no ecrã ficou por ver. Sem HLS |
 | `A-10` | Certificações (SOC 2, ISO 27001, HIPAA) | **não é código** — é processo, e não entra nesta fila |
 | `A-11` | SAML 2.0 | por escrever |
 

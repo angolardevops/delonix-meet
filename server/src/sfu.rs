@@ -204,6 +204,11 @@ struct Publication {
     /// Passado a palco pelo anfitrião: o seletor nunca suprime este microfone
     /// nem o conta para o top-N (ADR-0010, «Passar a palco»).
     pinned: AtomicBool,
+    /// O palco de um webinar (A-09): o interruptor PARTILHADO com o peer que
+    /// publica ([`SfuPeer::on_stage`]). `None` nas publicações que não vêm de um
+    /// participante (a ponte telefone↔sala, a dobragem), que nunca ficam fora
+    /// de palco. Ver [`Publication::off_stage`].
+    on_stage: Option<Arc<AtomicBool>>,
 }
 
 /// Origem do RTP de uma publicação.
@@ -257,6 +262,15 @@ pub(crate) fn bridge_opus_codec() -> RTCRtpCodecCapability {
 }
 
 impl Publication {
+    /// Quem publica está FORA de palco num webinar (A-09)? Então nada do que
+    /// publica sai da bomba de RTP: nem para a sala, nem para a gravação, nem
+    /// para a mistura do telefone, nem para o seletor de oradores — e ninguém
+    /// lhe é subscrito. A publicação existe (para a promoção ser imediata, sem
+    /// renegociar), mas é como se não existisse.
+    fn off_stage(&self) -> bool {
+        self.on_stage.as_ref().is_some_and(|s| !s.load(Relaxed))
+    }
+
     fn codec(&self) -> RTCRtpCodecCapability {
         match &self.source {
             PubSource::Remote { track, .. } => track.codec().capability.clone(),
@@ -560,6 +574,11 @@ struct SfuPeer {
     quality_hints: Mutex<HashMap<Uuid, String>>,
     /// `true` só depois de `pc.close().await` REGRESSAR (ver `Census`).
     close_done: Arc<AtomicBool>,
+    /// Este peer está em palco? Só pode ser `false` numa sala de formato
+    /// `broadcast` (webinar, A-09), para quem entrou sem papel de orador.
+    /// Partilhado com cada [`Publication`] dele: promover ou despromover é UMA
+    /// escrita, e a bomba de RTP de cada publicação vê-a no pacote seguinte.
+    on_stage: Arc<AtomicBool>,
     _vivo: Vivo,
 }
 
@@ -996,6 +1015,7 @@ impl SfuState {
             _vivo: Vivo::new(&self.census.publications),
             level_measured: true,
             pinned: AtomicBool::new(false),
+            on_stage: None,
         });
         tracing::info!(%room_id, leg = %leg_id, "ponte: publicação de áudio de fora da app");
         crate::metrics::Metrics::bump(&self.metrics.sfu_publications_total);
@@ -1054,6 +1074,7 @@ impl SfuState {
             // são duas razões, e é bom que sejam.)
             level_measured: false,
             pinned: AtomicBool::new(false),
+            on_stage: None,
         });
         tracing::info!(%room_id, dub = %dub_id, %lang, "dobragem: pista publicada");
         crate::metrics::Metrics::bump(&self.metrics.sfu_publications_total);
@@ -1239,6 +1260,7 @@ impl SfuState {
             dub_lang: Mutex::new(None),
             quality_hints: Mutex::new(HashMap::new()),
             close_done,
+            on_stage: Arc::new(AtomicBool::new(true)),
             _vivo: Vivo::new(&self.census.peers),
         });
         let substituido = room.peers.lock().await.insert(peer_id, peer.clone());
@@ -1491,8 +1513,61 @@ impl SfuState {
             _vivo: Vivo::new(&self.census.publications),
             level_measured: false,
             pinned: AtomicBool::new(false),
+            on_stage: Some(pub_peer.on_stage.clone()),
         });
+        // Fora de palco num webinar (A-09): a publicação fica (para a promoção
+        // ser imediata), mas o que publica não sai — e a recusa DIZ-SE a quem
+        // tentou, em vez de o deixar a mandar media que ninguém recebe.
+        if publication.off_stage() {
+            crate::metrics::Metrics::bump(&self.metrics.sfu_publish_offstage_total);
+            tracing::info!(%room_id, %publisher, kind = %publication.kind, "sfu: publicação fora de palco — retida");
+            let _ = pub_peer.out.send(ServerMsg::PublishRefused {
+                reason: "stage.not_on_stage".into(),
+            });
+        }
         self.activate_publication(room_id, room, publication).await;
+    }
+
+    /// Põe um peer em palco ou tira-o (webinar, A-09).
+    ///
+    /// Uma escrita no interruptor partilhado com as publicações dele, e uma
+    /// reavaliação da sala: ao subir, os outros passam a ser subscritos ao que
+    /// ele já publicava (sem ele renegociar nada); ao descer, perdem essas
+    /// subscrições pelo mesmo caminho que tira um vídeo fora da página.
+    ///
+    /// `false` se o peer não está nesta sala.
+    pub(crate) async fn set_on_stage(
+        self: &Arc<Self>,
+        room_id: Uuid,
+        peer_id: Uuid,
+        on: bool,
+    ) -> bool {
+        let Some(peer) = self.peer(room_id, peer_id).await else {
+            return false;
+        };
+        let antes = peer.on_stage.swap(on, Relaxed);
+        if antes == on {
+            return true;
+        }
+        if on {
+            // Ao subir, um keyframe já: quem passa a vê-lo não fica preto até
+            // ao próximo keyframe natural.
+            if let Some(room) = self.rooms.get(&room_id).map(|r| r.clone()) {
+                let pubs: Vec<Arc<Publication>> = room
+                    .publications
+                    .lock()
+                    .await
+                    .iter()
+                    .filter(|p| p.publisher == peer_id)
+                    .cloned()
+                    .collect();
+                for p in &pubs {
+                    request_keyframe(p, &self.metrics).await;
+                }
+            }
+        }
+        self.reevaluate_room_except(room_id, Some(peer_id)).await;
+        true
     }
 
     /// Põe uma publicação a circular: gravação, subscrições de toda a sala e a
@@ -1606,6 +1681,13 @@ impl SfuState {
             loop {
                 match publication.next_packet().await {
                     Ok(mut packet) => {
+                        // Fora de palco num webinar (A-09): nada sai daqui —
+                        // nem para a sala, nem para a gravação, nem para o
+                        // telefone, nem para o seletor de oradores. Lê-se e
+                        // descarta-se, para a fila do receptor não encher.
+                        if publication.off_stage() {
+                            continue;
+                        }
                         // Nível de voz deste pacote → energia para o seletor de
                         // oradores (`speaker_selector`).
                         if is_audio && audio_level_id != 0 {
@@ -1769,6 +1851,10 @@ impl SfuState {
                         key.1 != "video" || interest.as_ref().is_none_or(|set| set.contains(&key.0))
                     }
                 };
+                // Quem está fora de palco num webinar (A-09) não é subscrito
+                // por ninguém — e quem acabou de ser despromovido perde as
+                // subscrições que tinha, pelo mesmo caminho de remoção.
+                let wanted_by_client = wanted_by_client && !layers.iter().any(|p| p.off_stage());
                 if !wanted_by_client {
                     if let Some((_, sender)) = current.get(&key) {
                         let _ = peer.pc.remove_track(sender).await;
