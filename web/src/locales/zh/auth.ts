@@ -7,6 +7,7 @@ export default {
     tokenRecusado: '身份提供商的响应未被接受。请联系组织管理员。',
     expirou: 'SSO 登录已过期或已被使用。请重试。',
     contaEmConflito: '已存在使用此电子邮件或名称的账户。请联系管理员。',
+    contaPorLigar: '已存在使用此电子邮件的账户，且无法证明该账户属于您。请使用密码登录。',
     generico: '无法通过 SSO 登录。请重试。',
   },
   reposicao: {

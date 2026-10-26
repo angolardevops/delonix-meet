@@ -7,6 +7,7 @@ export default {
     tokenRecusado: 'A resposta do fornecedor de identidade não foi aceite. Fale com o administrador da organização.',
     expirou: 'A entrada por SSO expirou ou já foi usada. Tente de novo.',
     contaEmConflito: 'Já existe uma conta com este email ou nome. Fale com o administrador.',
+    contaPorLigar: 'Já existe uma conta com este email, e não foi possível provar que é sua. Entre com a palavra-passe.',
     generico: 'Não foi possível entrar por SSO. Tente de novo.',
   },
   reposicao: {

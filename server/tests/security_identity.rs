@@ -32,6 +32,11 @@ struct IdpAnswer {
     email: String,
     /// Nonce do pedido de autorização em curso (lido do `Location`).
     nonce: String,
+    /// `sub` a afirmar; `None` = `sub-{email}` (uma pessoa por email).
+    subject: Option<String>,
+    /// `email_verified` a afirmar; `None` = `true`. Um IdP que não verifica
+    /// emails (o Odoo) diz `false`.
+    email_verified: Option<bool>,
 }
 
 struct FakeIdp {
@@ -64,20 +69,27 @@ async fn idp_jwks(State(s): State<IdpState>) -> Json<Value> {
 }
 
 async fn idp_token(State(s): State<IdpState>) -> Json<Value> {
-    let (email, nonce) = {
+    let (email, nonce, subject, email_verified) = {
         let a = s.answer.lock().unwrap();
-        (a.email.clone(), a.nonce.clone())
+        (
+            a.email.clone(),
+            a.nonce.clone(),
+            a.subject
+                .clone()
+                .unwrap_or_else(|| format!("sub-{}", a.email)),
+            a.email_verified.unwrap_or(true),
+        )
     };
     let now = chrono::Utc::now().timestamp();
     let claims = json!({
         "iss": s.issuer,
-        "sub": format!("sub-{email}"),
+        "sub": subject,
         "aud": CLIENT_ID,
         "iat": now,
         "exp": now + 300,
         "nonce": nonce,
         "email": email,
-        "email_verified": true,
+        "email_verified": email_verified,
         "name": format!("Pessoa {email}"),
     });
     let mut header = jsonwebtoken::Header::new(jsonwebtoken::Algorithm::RS256);
@@ -1291,4 +1303,228 @@ async fn o_dominio_que_muda_sem_prova_perde_a_prova(db: sqlx::PgPool) {
     .await
     .unwrap();
     assert!(provado(&app, admin.org().to_string()).await);
+}
+
+/// IdP Odoo, 2026-10-26 — uma conta ainda POR LIGAR (local, nunca entrou por
+/// SSO) achava-se pelo email e ficava presa ao (iss, sub) de quem o IdP
+/// afirmasse ter esse email. Num IdP que não verifica emails -- o Odoo deixa
+/// cada utilizador mudar o seu nas preferências -- um colega punha lá o
+/// email da vítima e ficava com a conta dela, para sempre. Ligar por email
+/// passa a exigir `email_verified: true`.
+#[sqlx::test(migrations = "./migrations")]
+async fn sso_does_not_link_an_unbound_account_by_an_unverified_email(db: sqlx::PgPool) {
+    let app = TestApp::spawn_with(db, &[("OUTBOUND_ALLOW_HOSTS", "127.0.0.1")]).await;
+    let admin = app.new_org("teta.test").await;
+    let vitima = app.add_member(&admin, "vitima", "member").await;
+    let idp = FakeIdp::start().await;
+    wire_sso(&app, &admin, &idp).await;
+    app.verify_domain(admin.org()).await;
+
+    // O ataque: o colega entra com a SUA identidade no IdP (sub próprio), com
+    // o email da vítima nas preferências; o IdP não verifica emails.
+    {
+        let mut a = idp.answer.lock().unwrap();
+        a.subject = Some("sub-colega".into());
+        a.email_verified = Some(false);
+    }
+    let (st, sub, body) = sso_flow(&app, &idp, "teta.test", &vitima.email).await;
+    assert_eq!(
+        (st, sub.as_deref()),
+        (403, None),
+        "conta da vítima entregue por um email que o IdP não verificou: {body}"
+    );
+    assert_eq!(body["code"], "sso.link_unproven", "{body}");
+    let bound: String = sqlx::query_scalar("SELECT sso_subject FROM users WHERE id = $1::uuid")
+        .bind(&vitima.user_id)
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(bound, "", "a conta da vítima ficou ligada ao colega");
+
+    // Controlo positivo: um IdP que GARANTE o email liga a conta existente à
+    // identidade da própria pessoa (a migração de conta local para SSO).
+    {
+        let mut a = idp.answer.lock().unwrap();
+        a.subject = Some("sub-vitima".into());
+        a.email_verified = Some(true);
+    }
+    let (st, sub, body) = sso_flow(&app, &idp, "teta.test", &vitima.email).await;
+    assert_eq!(st, 302, "ligação com email verificado: {body}");
+    assert_eq!(sub.as_deref(), Some(vitima.user_id.as_str()));
+}
+
+/// IdP Odoo, 2026-10-26 — a conta encontra-se pela identidade federada
+/// (iss, sub) antes do email. Procurar pelo email primeiro partia a conta de
+/// quem mudasse de email no IdP: o callback não a achava e criava outra.
+#[sqlx::test(migrations = "./migrations")]
+async fn sso_finds_the_account_by_subject_when_the_idp_email_changes(db: sqlx::PgPool) {
+    let app = TestApp::spawn_with(db, &[("OUTBOUND_ALLOW_HOSTS", "127.0.0.1")]).await;
+    let admin = app.new_org("iota.test").await;
+    let idp = FakeIdp::start().await;
+    wire_sso(&app, &admin, &idp).await;
+    app.verify_domain(admin.org()).await;
+    {
+        let mut a = idp.answer.lock().unwrap();
+        a.subject = Some("sub-ana".into());
+        a.email_verified = Some(false);
+    }
+
+    // Primeira entrada: a conta nasce por JIT, ligada a (iss, sub-ana).
+    let (st, primeira, body) = sso_flow(&app, &idp, "iota.test", "ana@iota.test").await;
+    assert_eq!(st, 302, "JIT: {body}");
+    assert!(primeira.is_some());
+
+    // A Ana muda de email no IdP; o sub é o mesmo.
+    let (st, segunda, body) = sso_flow(&app, &idp, "iota.test", "ana.silva@iota.test").await;
+    assert_eq!(st, 302, "a mesma pessoa, com outro email: {body}");
+    assert_eq!(segunda, primeira, "abriu outra conta em vez da da Ana");
+    assert_eq!(
+        user_id_by_email(&app, "ana.silva@iota.test").await,
+        None,
+        "criou uma segunda conta para a mesma identidade"
+    );
+}
+
+/// Duas contas presas à mesma identidade (herança do tempo em que se
+/// procurava pelo email) não se resolvem escolhendo uma -- seria autoridade
+/// por sorteio (invariante 9). Recusa-se.
+#[sqlx::test(migrations = "./migrations")]
+async fn sso_refuses_an_identity_bound_to_two_accounts(db: sqlx::PgPool) {
+    let app = TestApp::spawn_with(db, &[("OUTBOUND_ALLOW_HOSTS", "127.0.0.1")]).await;
+    let admin = app.new_org("kappa.test").await;
+    let idp = FakeIdp::start().await;
+    wire_sso(&app, &admin, &idp).await;
+    app.verify_domain(admin.org()).await;
+    idp.answer.lock().unwrap().subject = Some("sub-bia".into());
+
+    // Controlo positivo: a primeira entrada abre a conta da Bia.
+    let (st, sub, body) = sso_flow(&app, &idp, "kappa.test", "bia@kappa.test").await;
+    assert_eq!(st, 302, "{body}");
+    assert!(sub.is_some());
+
+    // Uma segunda conta com a mesma identidade federada.
+    sqlx::query(
+        "INSERT INTO users (email, username, password_hash, sso_provider, sso_subject)
+         VALUES ('bia.antiga@kappa.test', 'bia-antiga', 'x', $1, 'sub-bia')",
+    )
+    .bind(&idp.issuer)
+    .execute(&app.db)
+    .await
+    .unwrap();
+
+    let (st, sub, body) = sso_flow(&app, &idp, "kappa.test", "bia@kappa.test").await;
+    assert_eq!(
+        (st, sub.as_deref()),
+        (403, None),
+        "escolheu uma de duas contas: {body}"
+    );
+    assert_eq!(body["code"], "sso.identity_ambiguous", "{body}");
+}
+
+async fn set_org_odoo(app: &TestApp, org_id: &str, odoo_url: &str) {
+    sqlx::query("UPDATE organizations SET odoo_enabled = TRUE, odoo_url = $1 WHERE id = $2::uuid")
+        .bind(odoo_url)
+        .bind(org_id)
+        .execute(&app.db)
+        .await
+        .unwrap();
+}
+
+async fn make_odoo_managed(app: &TestApp, user_id: &str, odoo_org_id: &str, odoo_uid: i32) {
+    sqlx::query(
+        "UPDATE users SET odoo_org_id = $1::uuid, odoo_uid = $2, odoo_managed = TRUE
+         WHERE id = $3::uuid",
+    )
+    .bind(odoo_org_id)
+    .bind(odoo_uid)
+    .bind(user_id)
+    .execute(&app.db)
+    .await
+    .unwrap();
+}
+
+/// IdP Odoo, 2026-10-26 — as contas que o directório do Odoo sincroniza nascem
+/// por ligar, e o Odoo não garante emails. Sem outra prova ficavam sem SSO (e
+/// sem entrada nenhuma com `enforce_sso`). A prova é o próprio directório: a
+/// conta é gerida pelo Odoo desta org, e esse Odoo, como IdP, afirma o
+/// `odoo_uid` dela.
+#[sqlx::test(migrations = "./migrations")]
+async fn sso_links_a_directory_account_when_its_own_odoo_asserts_its_uid(db: sqlx::PgPool) {
+    let app = TestApp::spawn_with(db, &[("OUTBOUND_ALLOW_HOSTS", "127.0.0.1")]).await;
+    let admin = app.new_org("lambda.test").await;
+    let membro = app.add_member(&admin, "rui", "member").await;
+    let idp = FakeIdp::start().await;
+    wire_sso(&app, &admin, &idp).await;
+    app.verify_domain(admin.org()).await;
+    make_odoo_managed(&app, &membro.user_id, admin.org(), 41).await;
+    idp.answer.lock().unwrap().email_verified = Some(false);
+
+    // O Odoo da org é OUTRO (outra origem): o directório não prova nada.
+    set_org_odoo(&app, admin.org(), "https://outro-odoo.lambda.test").await;
+    idp.answer.lock().unwrap().subject = Some("41".into());
+    let (st, _sub, body) = sso_flow(&app, &idp, "lambda.test", &membro.email).await;
+    assert_eq!(
+        st, 403,
+        "ligou pela palavra de um Odoo que não gere a conta: {body}"
+    );
+    assert_eq!(body["code"], "sso.link_unproven", "{body}");
+
+    // O Odoo certo, mas um colega (outro uid) com o email do Rui.
+    set_org_odoo(&app, admin.org(), &idp.issuer).await;
+    idp.answer.lock().unwrap().subject = Some("42".into());
+    let (st, _sub, body) = sso_flow(&app, &idp, "lambda.test", &membro.email).await;
+    assert_eq!(st, 403, "o colega ficou com a conta do Rui: {body}");
+    assert_eq!(body["code"], "sso.link_unproven", "{body}");
+
+    // O próprio Rui: o seu Odoo afirma o seu uid.
+    idp.answer.lock().unwrap().subject = Some("41".into());
+    let (st, sub, body) = sso_flow(&app, &idp, "lambda.test", &membro.email).await;
+    assert_eq!(
+        st, 302,
+        "a conta sincronizada não se ligou ao seu Odoo: {body}"
+    );
+    assert_eq!(sub.as_deref(), Some(membro.user_id.as_str()));
+}
+
+/// Invariante 9 — uma conta gerida pelo Odoo de OUTRA org não se liga pelo IdP
+/// desta, nem com o email garantido: seria uma segunda autoridade.
+#[sqlx::test(migrations = "./migrations")]
+async fn sso_does_not_link_an_account_managed_by_another_orgs_odoo(db: sqlx::PgPool) {
+    let app = TestApp::spawn_with(db, &[("OUTBOUND_ALLOW_HOSTS", "127.0.0.1")]).await;
+    let admin = app.new_org("mu.test").await;
+    let outra = app.new_org("nu.test").await;
+    let membro = app.add_member(&admin, "eva", "member").await;
+    let idp = FakeIdp::start().await;
+    wire_sso(&app, &admin, &idp).await;
+    app.verify_domain(admin.org()).await;
+    make_odoo_managed(&app, &membro.user_id, outra.org(), 7).await;
+    {
+        let mut a = idp.answer.lock().unwrap();
+        a.subject = Some("sub-eva".into());
+        a.email_verified = Some(true);
+    }
+
+    let (st, sub, body) = sso_flow(&app, &idp, "mu.test", &membro.email).await;
+    assert_eq!(
+        (st, sub.as_deref()),
+        (403, None),
+        "a conta de outra autoridade foi ligada: {body}"
+    );
+    assert_eq!(body["code"], "sso.link_unproven", "{body}");
+
+    // Nem pelo directório: o Odoo desta org afirma o uid certo, mas a conta é
+    // gerida pelo Odoo da OUTRA.
+    set_org_odoo(&app, admin.org(), &idp.issuer).await;
+    {
+        let mut a = idp.answer.lock().unwrap();
+        a.subject = Some("7".into());
+        a.email_verified = Some(false);
+    }
+    let (st, sub, body) = sso_flow(&app, &idp, "mu.test", &membro.email).await;
+    assert_eq!(
+        (st, sub.as_deref()),
+        (403, None),
+        "o directório de uma org ligou uma conta gerida por outra: {body}"
+    );
+    assert_eq!(body["code"], "sso.link_unproven", "{body}");
 }

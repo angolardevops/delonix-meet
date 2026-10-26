@@ -7,6 +7,7 @@ export default {
     tokenRecusado: 'The identity provider’s response was not accepted. Contact the organisation administrator.',
     expirou: 'The SSO sign-in expired or was already used. Try again.',
     contaEmConflito: 'An account with this email or name already exists. Contact the administrator.',
+    contaPorLigar: 'An account with this email already exists, and it could not be proven to be yours. Sign in with your password.',
     generico: 'Could not sign in with SSO. Try again.',
   },
   reposicao: {

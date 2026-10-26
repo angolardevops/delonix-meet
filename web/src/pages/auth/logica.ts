@@ -123,6 +123,8 @@ export function chaveDoErroSso(codigo: string): string {
       return 'auth.ssoErro.expirou'
     case 'conflict':
       return 'auth.ssoErro.contaEmConflito'
+    case 'sso.link_unproven':
+      return 'auth.ssoErro.contaPorLigar'
     default:
       return 'auth.ssoErro.generico'
   }
