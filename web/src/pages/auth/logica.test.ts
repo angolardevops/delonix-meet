@@ -78,6 +78,7 @@ describe('o regresso do SSO ao login (#/login?sso_error=)', () => {
     expect(chaveDoErroSso('sso.provider_unavailable')).toBe('auth.ssoErro.fornecedorEmBaixo')
     expect(chaveDoErroSso('sso.invalid_id_token')).toBe('auth.ssoErro.tokenRecusado')
     expect(chaveDoErroSso('auth.unauthenticated')).toBe('auth.ssoErro.expirou')
+    expect(chaveDoErroSso('sso.link_unproven')).toBe('auth.ssoErro.contaPorLigar')
     expect(chaveDoErroSso('internal')).toBe('auth.ssoErro.generico')
   })
 })

@@ -1322,7 +1322,7 @@ async fn sso_login_inner(
         ("state" = String, Query, description = "State anti-CSRF emitido por `/api/auth/sso/authorize` (uso único, 10 min)."),
     ),
     responses(
-        (status = 302, description = "Redirecção para o frontend com o access token no fragmento (`#/sso-complete`). Define o cookie `dlx_refresh`. Com um segundo factor LOCAL activo (TOTP/chave de acesso), redirecciona antes para `#/sso-mfa` com um `mfa_token` -- sem cookie nem access token; os tokens só saem de `/api/auth/login/mfa` (A4). É uma navegação do browser: uma recusa ou falha também redirecciona, para `#/login?sso_error=<código>` -- `sso.domain_not_verified`, `sso.account_not_in_org`, `sso.email_domain_mismatch`, `sso.provider_unavailable` (o IdP não respondeu na troca do código), `sso.invalid_id_token` (o id_token não verifica), `auth.unauthenticated` (state desconhecido, usado ou expirado), `conflict` (o JIT colidiu)."),
+        (status = 302, description = "Redirecção para o frontend com o access token no fragmento (`#/sso-complete`). Define o cookie `dlx_refresh`. Com um segundo factor LOCAL activo (TOTP/chave de acesso), redirecciona antes para `#/sso-mfa` com um `mfa_token` -- sem cookie nem access token; os tokens só saem de `/api/auth/login/mfa` (A4). É uma navegação do browser: uma recusa ou falha também redirecciona, para `#/login?sso_error=<código>` -- `sso.domain_not_verified`, `sso.account_not_in_org`, `sso.identity_mismatch` (a conta já está ligada a outra identidade), `sso.link_unproven` (conta por ligar sem prova de que é desta identidade), `sso.identity_ambiguous` (a identidade está ligada a mais do que uma conta), `sso.email_domain_mismatch`, `sso.provider_unavailable` (o IdP não respondeu na troca do código), `sso.invalid_id_token` (o id_token não verifica), `auth.unauthenticated` (state desconhecido, usado ou expirado), `conflict` (o JIT colidiu)."),
         (status = 422, description = "`sso.public_url_missing` — sem `PUBLIC_URL` nem `CORS_ORIGINS` não há para onde voltar (em produção; em modo inseguro serve o `localhost` de desenvolvimento). Sem endereço configurado, os erros saem em JSON e não redireccionam.", body = crate::openapi::ErrorBody),
         (status = 429, description = "Limite de pedidos de autenticação por IP.", body = crate::openapi::ErrorBody),
     )
@@ -1452,13 +1452,53 @@ async fn sso_callback_inner(
     // Just-in-Time Provisioning: procurar ou criar o utilizador — mas só dentro
     // da regra de pertença (R130). O IdP é escolhido pelo administrador da org
     // e pode afirmar o email que quiser: o email não é prova de pertença.
-    let existing: Option<crate::users::UserPublic> = sqlx::query_as(&format!(
-        "SELECT {} FROM users WHERE email = $1",
+    //
+    // A conta encontra-se PRIMEIRO pela identidade federada (iss, sub), e só
+    // depois pelo email. Um IdP pode deixar o utilizador mudar o próprio email
+    // (o Odoo deixa, nas preferências): procurar pelo email primeiro entregava
+    // a conta de um colega a quem lhe copiasse o endereço, e partia a conta de
+    // quem o mudasse legitimamente. O `sub` é o identificador estável.
+    let by_subject: Vec<crate::users::UserPublic> = sqlx::query_as(&format!(
+        "SELECT {} FROM users WHERE sso_provider = $1 AND sso_subject = $2 LIMIT 2",
         crate::users::USER_PUBLIC_COLUMNS
     ))
-    .bind(&email)
-    .fetch_optional(&state.db)
+    .bind(&sso_provider)
+    .bind(&sso_subject)
+    .fetch_all(&state.db)
     .await?;
+    if by_subject.len() > 1 {
+        // Duas contas presas à mesma identidade (herança de quando se
+        // procurava pelo email: quem mudou de email no IdP ganhava uma conta
+        // nova com o mesmo sub). Escolher uma seria autoridade por sorteio
+        // (invariante 9): recusa-se, e a trilha diz qual identidade.
+        tracing::warn!(%email, org_id = %entry.org_id, %sso_provider, %sso_subject,
+            "SSO recusado: identidade federada ligada a mais do que uma conta");
+        crate::audit::log(
+            &state.db,
+            Some(entry.org_id),
+            by_subject[0].id,
+            "auth.sso_refused",
+            &email,
+        )
+        .await;
+        return Err(ApiError::Domain(
+            delonix_meet_core::DomainError::forbidden(SSO_IDENTITY_AMBIGUOUS).with_message(
+                "Esta identidade está ligada a mais do que uma conta — um administrador tem de as juntar.",
+            ),
+        ));
+    }
+    let existing: Option<crate::users::UserPublic> = match by_subject.into_iter().next() {
+        Some(u) => Some(u),
+        None => {
+            sqlx::query_as(&format!(
+                "SELECT {} FROM users WHERE email = $1",
+                crate::users::USER_PUBLIC_COLUMNS
+            ))
+            .bind(&email)
+            .fetch_optional(&state.db)
+            .await?
+        }
+    };
 
     let account = match &existing {
         Some(u) => {
@@ -1479,14 +1519,59 @@ async fn sso_callback_inner(
     // afirmar livremente. Sem isto, o IdP de uma segunda org "herdava" a
     // conta na primeira vez que o email coincidisse.
     if let Some(u) = &existing {
-        let bound: Option<(String, String)> =
-            sqlx::query_as("SELECT sso_provider, sso_subject FROM users WHERE id = $1")
-                .bind(u.id)
-                .fetch_optional(&state.db)
+        let bound: Option<(String, String, Option<Uuid>, Option<i32>)> = sqlx::query_as(
+            "SELECT sso_provider, sso_subject, odoo_org_id, odoo_uid FROM users WHERE id = $1",
+        )
+        .bind(u.id)
+        .fetch_optional(&state.db)
+        .await?;
+        if let Some((bound_provider, bound_subject, odoo_org_id, odoo_uid)) = &bound {
+            // Conta ainda por ligar (local, ou nunca entrou por SSO), achada
+            // pelo email: ligá-la a este (iss, sub) é dá-la a quem o IdP diz
+            // que tem aquele email. Um IdP que não verifica emails -- o Odoo
+            // não verifica, e o utilizador muda o seu -- ligava a conta de um
+            // colega a quem lhe copiasse o endereço, para sempre. Liga-se só
+            // com uma de duas provas:
+            // - o directório: a conta é gerida pelo Odoo DESTA org e é esse
+            //   mesmo Odoo, como IdP, que afirma o `odoo_uid` dela;
+            // - o IdP GARANTE o email (`email_verified: true`, OIDC Core
+            //   §5.1), e a conta não é gerida pelo Odoo de OUTRA org
+            //   (invariante 9: uma conta, uma autoridade).
+            if bound_provider.is_empty() {
+                let by_directory = sso_directory_proves_identity(
+                    &state,
+                    entry.org_id,
+                    &sso_provider,
+                    &sso_subject,
+                    *odoo_org_id,
+                    *odoo_uid,
+                )
                 .await?;
-        if let Some((bound_provider, bound_subject)) = bound {
+                let by_verified_email = claims.email_verified() == Some(true)
+                    && odoo_org_id.is_none_or(|o| o == entry.org_id);
+                if !by_directory && !by_verified_email {
+                    tracing::warn!(
+                        %email, org_id = %entry.org_id, %sso_provider,
+                        "SSO recusado: a ligação de uma conta existente não está provada"
+                    );
+                    crate::audit::log(
+                        &state.db,
+                        Some(entry.org_id),
+                        u.id,
+                        "auth.sso_refused",
+                        &email,
+                    )
+                    .await;
+                    return Err(ApiError::Domain(
+                        delonix_meet_core::DomainError::forbidden(SSO_LINK_UNPROVEN).with_message(
+                            "Já existe uma conta com este email, e não foi possível provar \
+                                 que é sua — entre com a palavra-passe.",
+                        ),
+                    ));
+                }
+            }
             if !bound_provider.is_empty()
-                && (bound_provider != sso_provider || bound_subject != sso_subject)
+                && (*bound_provider != sso_provider || *bound_subject != sso_subject)
             {
                 tracing::warn!(
                     %email, org_id = %entry.org_id, %sso_provider,
@@ -1687,11 +1772,61 @@ pub(crate) const SSO_EMAIL_DOMAIN_MISMATCH: &str = "sso.email_domain_mismatch";
 /// Código estável: a conta já está ligada a um (issuer, subject) diferente
 /// do que este IdP afirmou -- nunca se re-liga por email sozinho (achado A1).
 pub(crate) const SSO_IDENTITY_MISMATCH: &str = "sso.identity_mismatch";
+/// Código estável: a conta existe pelo email, ainda não está ligada a nenhuma
+/// identidade federada, e nada prova que é desta identidade -- nem o
+/// directório do Odoo que a gere, nem um email que o IdP garanta.
+pub(crate) const SSO_LINK_UNPROVEN: &str = "sso.link_unproven";
+/// Código estável: a mesma identidade federada (iss, sub) está ligada a mais
+/// do que uma conta -- não se escolhe uma (invariante 9).
+pub(crate) const SSO_IDENTITY_AMBIGUOUS: &str = "sso.identity_ambiguous";
 /// Código estável: domínio ainda sem prova de posse (DNS TXT) -- JIT recusado
 /// até lá (achado A3, raiz). `enforce_sso` tem a mesma guarda, noutro sítio
 /// (`sso_enforced_for_account`), porque entra pelo login por password, não
 /// pelo callback.
 pub(crate) const SSO_DOMAIN_NOT_VERIFIED: &str = "sso.domain_not_verified";
+
+/// O directório prova que esta conta (ainda por ligar) é desta identidade
+/// federada? Só quando as três coisas batem: a conta é gerida pelo Odoo
+/// desta org (`odoo_org_id`), o `sub` é o `odoo_uid` que a sincronização
+/// gravou (o `nk_oidc_provider` afirma o id do `res.users`), e o IdP é esse
+/// mesmo Odoo -- a origem do issuer é a do `odoo_url` da org, com a
+/// integração ligada. Qualquer outra combinação é `false`: falha fechada.
+async fn sso_directory_proves_identity(
+    state: &AppState,
+    org_id: Uuid,
+    issuer: &str,
+    subject: &str,
+    account_odoo_org: Option<Uuid>,
+    account_odoo_uid: Option<i32>,
+) -> Result<bool, ApiError> {
+    let Some(uid) = account_odoo_uid else {
+        return Ok(false);
+    };
+    if account_odoo_org != Some(org_id) || subject != uid.to_string() {
+        return Ok(false);
+    }
+    let odoo_url: Option<Option<String>> =
+        sqlx::query_scalar("SELECT odoo_url FROM organizations WHERE id = $1 AND odoo_enabled")
+            .bind(org_id)
+            .fetch_optional(&state.db)
+            .await?;
+    Ok(odoo_url
+        .flatten()
+        .is_some_and(|odoo_url| same_origin(&odoo_url, issuer)))
+}
+
+/// Esquema, anfitrião (sem distinguir maiúsculas) e porta iguais.
+fn same_origin(a: &str, b: &str) -> bool {
+    match (url::Url::parse(a), url::Url::parse(b)) {
+        (Ok(a), Ok(b)) => {
+            a.scheme() == b.scheme()
+                && a.host_str().map(str::to_ascii_lowercase)
+                    == b.host_str().map(str::to_ascii_lowercase)
+                && a.port_or_known_default() == b.port_or_known_default()
+        }
+        _ => false,
+    }
+}
 
 /// O que o callback SSO pode fazer com o email que o IdP afirmou.
 #[derive(Debug, PartialEq, Eq)]
